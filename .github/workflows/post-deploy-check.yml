@@ -35,20 +35,21 @@ jobs:
             echo "::error ::No se pudo obtener el executionId"
             exit 1
           fi
-
-          echo "execution_id=$EXECUTION_ID" >> $GITHUB_ENV
+          echo "----"
+          echo "::set-output name=execution_id::$EXECUTION_ID"
+          echo "..."
 
       - name: Esperar a que termine el deploy (espera hasta 20 veces cada 1 minuto)
         id: esperar
         run: |
           PIPELINE_NAME="git-hub-blade"
-          EXECUTION_ID="${{ env.execution_id }}"
+          EXECUTION_ID="${{ steps.get_execution.outputs.execution_id }}"
           MAX_INTENTOS=20
           INTERVALO=60
           INTENTO=1
 
           while [ "$INTENTO" -le "$MAX_INTENTOS" ]; do
-            echo "⏳ Intento $INTENTO/$MAX_INTENTOS - Esperando deploy..."
+            echo "⏳ Intento $INTENTO/$MAX_INTENTOS - Esperando que finalice ejecución $EXECUTION_ID"
 
             STATUS=$(aws codepipeline get-pipeline-execution \
               --pipeline-name "$PIPELINE_NAME" \
@@ -56,34 +57,32 @@ jobs:
               --query "pipelineExecution.status" \
               --output text)
 
-            echo "Estado actual del pipeline: $STATUS"
+            echo "Estado actual: $STATUS"
 
             if [[ "$STATUS" == "Succeeded" ]]; then
               echo "✅ Despliegue exitoso detectado"
-              echo "despliegue=ok" >> $GITHUB_ENV
-              break
+              echo "::set-output name=despliegue::ok"
+              exit 0
             elif [[ "$STATUS" == "Failed" || "$STATUS" == "Stopped" ]]; then
-              echo "::error ::El despliegue falló o fue detenido"
-              echo "despliegue=fail" >> $GITHUB_ENV
+              echo "❌ El despliegue falló o fue detenido"
+              echo "::set-output name=despliegue::fail"
               exit 1
             fi
 
-            echo "⌛ Aún no completado. Esperando $INTERVALO segundos..."
+            echo "⏳ Aún no completado. Esperando $INTERVALO segundos..."
             sleep $INTERVALO
             ((INTENTO++))
           done
 
-          if [ "$INTENTO" -gt "$MAX_INTENTOS" ]; then
-            echo "::error ::El despliegue no se completó tras $((MAX_INTENTOS * INTERVALO / 60)) minutos"
-            echo "despliegue=fail" >> $GITHUB_ENV
-            exit 1
-          fi
+          echo "❌ El despliegue no se completó tras $((MAX_INTENTOS * INTERVALO / 60)) minutos"
+          echo "::set-output name=despliegue::fail"
+          exit 1
 
       - name: Ejecutar pruebas post-deploy
-        if: env.despliegue == 'ok'
+        if: steps.esperar.outputs.despliegue == 'ok'
         run: |
-          echo "✅ LLEGÓ AQUÍ - Ejecutando pruebas post-deploy:"
+          echo "✅ Ejecutando pruebas post-deploy:"
           for i in {1..10}; do
-            echo "✔️ Prueba $i"
+            echo "✔️ Prueba $i exitosa"
           done
           ls -la
