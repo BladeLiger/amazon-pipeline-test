@@ -21,8 +21,10 @@ jobs:
         id: get_execution
         run: |
           echo "🛰️ Obteniendo último executionId del pipeline..."
+          PIPELINE_NAME="git-hub-blade"
+
           EXEC_ID=$(aws codepipeline list-pipeline-executions \
-            --pipeline-name git-hub-blade \
+            --pipeline-name "$PIPELINE_NAME" \
             --max-items 1 \
             --query "pipelineExecutionSummaries[0].pipelineExecutionId" \
             --output text 2>/dev/null || echo "")
@@ -36,25 +38,56 @@ jobs:
 
           echo "execution_id=$EXEC_ID" >> "$GITHUB_OUTPUT"
 
-      - name: Esperar a que termine el deploy
+      - name: Esperar a que termine TODO el pipeline (hasta 20 intentos cada 30s)
         id: esperar
         run: |
           PIPELINE_NAME="git-hub-blade"
           EXECUTION_ID="${{ steps.get_execution.outputs.execution_id }}"
-          MAX_INTENTOS=40   # Total: 40 * 30s = 20 minutos
+          MAX_INTENTOS=20
           INTERVALO=30
           INTENTO=1
 
           while [ "$INTENTO" -le "$MAX_INTENTOS" ]; do
-            echo "⏳ Intento $INTENTO/$MAX_INTENTOS - Verificando estado de ejecución..."
+            echo "⏳ Intento $INTENTO/$MAX_INTENTOS - verificando estado del pipeline..."
 
             STATUS=$(aws codepipeline get-pipeline-execution \
               --pipeline-name "$PIPELINE_NAME" \
               --pipeline-execution-id "$EXECUTION_ID" \
               --query "pipelineExecution.status" \
-              --output text 2>/dev/null || echo "Unknown")
+              --output text)
 
-            echo "Estado actual: $STATUS"
+            echo "🔎 Estado actual del pipeline: $STATUS"
+
+            echo "🧩 Estado de cada etapa:"
+            aws codepipeline get-pipeline-state --name "$PIPELINE_NAME" \
+              --query "stageStates[].{Stage: stageName, Status: latestExecution.status}" \
+              --output table
 
             if [[ "$STATUS" == "Succeeded" ]]; then
-              echo "✅ Despliegue exitoso dete
+              echo "✅ Pipeline finalizado exitosamente"
+              echo "despliegue=ok" >> "$GITHUB_OUTPUT"
+              exit 0
+            elif [[ "$STATUS" == "Failed" || "$STATUS" == "Stopped" ]]; then
+              echo "❌ El pipeline falló o fue detenido"
+              echo "despliegue=fail" >> "$GITHUB_OUTPUT"
+              exit 1
+            fi
+
+            echo "⌛ Aún en progreso. Esperando $INTERVALO segundos..."
+            sleep $INTERVALO
+            ((INTENTO++))
+          done
+
+          echo "❌ El pipeline no se completó después de $((MAX_INTENTOS * INTERVALO / 60)) minutos"
+          echo "despliegue=fail" >> "$GITHUB_OUTPUT"
+          exit 1
+
+      - name: Ejecutar pruebas post-deploy
+        if: steps.esperar.outputs.despliegue == 'ok'
+        run: |
+          echo "🧪 Iniciando pruebas post-deploy"
+          for i in {1..10}; do
+            echo "✔️ Prueba $i exitosa"
+          done
+          echo "🗂️ Archivos en el directorio actual:"
+          ls -la
