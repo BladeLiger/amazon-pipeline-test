@@ -26,6 +26,12 @@ jobs:
             --max-items 1 \
             --query "pipelineExecutionSummaries[0].pipelineExecutionId" \
             --output text)
+
+          if [ "$EXECUTION_ID" == "None" ] || [ -z "$EXECUTION_ID" ]; then
+            echo "❌ No se encontró ninguna ejecución para el pipeline $PIPELINE_NAME"
+            exit 1
+          fi
+
           echo "Último executionId: $EXECUTION_ID"
           echo "execution_id=$EXECUTION_ID" >> "$GITHUB_OUTPUT"
 
