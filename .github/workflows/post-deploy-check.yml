@@ -17,36 +17,54 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: us-east-2
 
-      - name: Esperar y verificar despliegue cada 5 min (hasta 10 intentos)
+      - name: Obtener el último executionId del pipeline
+        id: get_execution
+        run: |
+          PIPELINE_NAME="git-hub-blade"
+          EXECUTION_ID=$(aws codepipeline list-pipeline-executions \
+            --pipeline-name "$PIPELINE_NAME" \
+            --max-items 1 \
+            --query "pipelineExecutionSummaries[0].pipelineExecutionId" \
+            --output text)
+          echo "Último executionId: $EXECUTION_ID"
+          echo "execution_id=$EXECUTION_ID" >> "$GITHUB_OUTPUT"
+
+      - name: Esperar a que termine el deploy (espera hasta 10 veces cada 5 minutos)
         id: esperar
         run: |
           PIPELINE_NAME="git-hub-blade"
+          EXECUTION_ID="${{ steps.get_execution.outputs.execution_id }}"
           MAX_INTENTOS=10
-          INTERVALO=300  # 5 min
+          INTERVALO=300
           INTENTO=1
 
           while [ "$INTENTO" -le "$MAX_INTENTOS" ]; do
-            echo "⏳ Intento $INTENTO de $MAX_INTENTOS..."
+            echo "⏳ Intento $INTENTO/$MAX_INTENTOS - Esperando deploy..."
 
-            STATUS=$(aws codepipeline get-pipeline-state \
-              --name "$PIPELINE_NAME" \
-              --query "stageStates[?stageName=='Deploy'].latestExecution.status" \
+            STATUS=$(aws codepipeline get-pipeline-execution \
+              --pipeline-name "$PIPELINE_NAME" \
+              --pipeline-execution-id "$EXECUTION_ID" \
+              --query "pipelineExecution.status" \
               --output text)
 
-            echo "Estado actual: $STATUS"
+            echo "Estado actual del pipeline: $STATUS"
 
             if [[ "$STATUS" == "Succeeded" ]]; then
               echo "✅ Despliegue exitoso detectado"
               echo "despliegue=ok" >> "$GITHUB_OUTPUT"
               exit 0
+            elif [[ "$STATUS" == "Failed" || "$STATUS" == "Stopped" ]]; then
+              echo "❌ El despliegue falló o fue detenido"
+              echo "despliegue=fail" >> "$GITHUB_OUTPUT"
+              exit 1
             fi
 
-            echo "❌ Aún no desplegado. Esperando $INTERVALO segundos..."
+            echo "Aún no completado. Esperando $INTERVALO segundos..."
             sleep $INTERVALO
             ((INTENTO++))
           done
 
-          echo "❌ Despliegue no completado tras $((MAX_INTENTOS * INTERVALO / 60)) minutos"
+          echo "❌ El despliegue no se completó tras $((MAX_INTENTOS * INTERVALO / 60)) minutos"
           echo "despliegue=fail" >> "$GITHUB_OUTPUT"
           exit 1
 
