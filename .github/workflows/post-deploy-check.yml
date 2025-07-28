@@ -1,64 +1,105 @@
-- name: Esperar nueva ejecución del pipeline
-  id: esperar
-  run: |
-    PIPELINE_NAME="git-hub-blade"
-    REGION="us-east-2"
-    MAX_INTENTOS=20
-    INTERVALO=30
-    INTENTO=1
+name: Check AWS and Run Tests After Deploy
 
-    echo "🔎 Obteniendo executionId actual antes del push..."
-    EXECUTION_ANTES=$(aws codepipeline list-pipeline-executions \
-      --pipeline-name "$PIPELINE_NAME" \
-      --max-items 1 \
-      --region "$REGION" \
-      --query "pipelineExecutionSummaries[0].pipelineExecutionId" \
-      --output text)
+on:
+  push:
+    branches:
+      - main
 
-    echo "Execution ID antes del push: $EXECUTION_ANTES"
+jobs:
+  wait-and-check:
+    runs-on: ubuntu-latest
 
-    NUEVO_EXECUTION_ID=""
+    steps:
+      - name: Configurar credenciales AWS
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-2
 
-    echo "⏳ Esperando nueva ejecución generada por este push..."
-    while [ "$INTENTO" -le "$MAX_INTENTOS" ]; do
-      ACTUAL=$(aws codepipeline list-pipeline-executions \
-        --pipeline-name "$PIPELINE_NAME" \
-        --max-items 1 \
-        --region "$REGION" \
-        --query "pipelineExecutionSummaries[0].pipelineExecutionId" \
-        --output text)
+      - name: Esperar ejecución del pipeline y monitorear su estado
+        id: esperar
+        run: |
+          PIPELINE_NAME="git-hub-blade"
+          REGION="us-east-2"
+          MAX_INTENTOS=20
+          INTERVALO=30
+          INTENTO=1
 
-      if [[ "$ACTUAL" != "$EXECUTION_ANTES" && "$ACTUAL" != "None" && "$ACTUAL" != "" ]]; then
-        echo "✅ Nueva ejecución detectada: $ACTUAL"
-        NUEVO_EXECUTION_ID=$ACTUAL
-        break
-      fi
+          echo "🔎 Obteniendo executionId actual antes del push..."
+          EXECUTION_ANTES=$(aws codepipeline list-pipeline-executions \
+            --pipeline-name "$PIPELINE_NAME" \
+            --max-items 1 \
+            --region "$REGION" \
+            --query "pipelineExecutionSummaries[0].pipelineExecutionId" \
+            --output text)
 
-      echo "⏳ Intento $INTENTO/$MAX_INTENTOS: aún no se detecta nueva ejecución..."
-      sleep $INTERVALO
-      ((INTENTO++))
-    done
+          echo "Execution ID antes del push: $EXECUTION_ANTES"
 
-    if [ -z "$NUEVO_EXECUTION_ID" ]; then
-      echo "❌ No se detectó nueva ejecución del pipeline tras $((MAX_INTENTOS * INTERVALO)) segundos."
-      exit 1
-    fi
+          NUEVO_EXECUTION_ID=""
 
-    echo "🔄 Esperando que finalice la ejecución $NUEVO_EXECUTION_ID..."
+          echo "⏳ Esperando nueva ejecución generada por este push..."
+          while [ "$INTENTO" -le "$MAX_INTENTOS" ]; do
+            ACTUAL=$(aws codepipeline list-pipeline-executions \
+              --pipeline-name "$PIPELINE_NAME" \
+              --max-items 1 \
+              --region "$REGION" \
+              --query "pipelineExecutionSummaries[0].pipelineExecutionId" \
+              --output text)
 
-    INTENTO=1
-    while [ "$INTENTO" -le "$MAX_INTENTOS" ]; do
-      STATUS=$(aws codepipeline get-pipeline-execution \
-        --pipeline-name "$PIPELINE_NAME" \
-        --pipeline-execution-id "$NUEVO_EXECUTION_ID" \
-        --region "$REGION" \
-        --query "pipelineExecution.status" \
-        --output text)
+            if [[ "$ACTUAL" != "$EXECUTION_ANTES" && "$ACTUAL" != "None" && "$ACTUAL" != "" ]]; then
+              echo "✅ Nueva ejecución detectada: $ACTUAL"
+              NUEVO_EXECUTION_ID=$ACTUAL
+              break
+            fi
 
-      echo "Intento $INTENTO: Estado actual = $STATUS"
+            echo "⏳ Intento $INTENTO/$MAX_INTENTOS: aún no se detecta nueva ejecución..."
+            sleep $INTERVALO
+            ((INTENTO++))
+          done
 
-      if [[ "$STATUS" == "Succeeded" ]]; then
-        echo "✅ Despliegue exitoso detectado"
-        echo "despliegue=ok" >> "$GITHUB_OUTPUT"
-        exit 0
-      elif [[ "$STATUS"]()]()
+          if [ -z "$NUEVO_EXECUTION_ID" ]; then
+            echo "❌ No se detectó nueva ejecución del pipeline tras $((MAX_INTENTOS * INTERVALO)) segundos."
+            echo "despliegue=fail" >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+
+          echo "🔄 Esperando que finalice la ejecución $NUEVO_EXECUTION_ID..."
+
+          INTENTO=1
+          while [ "$INTENTO" -le "$MAX_INTENTOS" ]; do
+            STATUS=$(aws codepipeline get-pipeline-execution \
+              --pipeline-name "$PIPELINE_NAME" \
+              --pipeline-execution-id "$NUEVO_EXECUTION_ID" \
+              --region "$REGION" \
+              --query "pipelineExecution.status" \
+              --output text)
+
+            echo "Intento $INTENTO: Estado actual = $STATUS"
+
+            if [[ "$STATUS" == "Succeeded" ]]; then
+              echo "✅ Despliegue exitoso detectado"
+              echo "despliegue=ok" >> "$GITHUB_OUTPUT"
+              exit 0
+            elif [[ "$STATUS" == "Failed" || "$STATUS" == "Stopped" ]]; then
+              echo "❌ El despliegue falló o fue detenido"
+              echo "despliegue=fail" >> "$GITHUB_OUTPUT"
+              exit 1
+            fi
+
+            sleep $INTERVALO
+            ((INTENTO++))
+          done
+
+          echo "❌ El despliegue no se completó tras $((MAX_INTENTOS * INTERVALO)) segundos"
+          echo "despliegue=fail" >> "$GITHUB_OUTPUT"
+          exit 1
+
+      - name: Ejecutar pruebas post-deploy
+        if: steps.esperar.outputs.despliegue == 'ok'
+        run: |
+          echo "✅ Ejecutando pruebas post-deploy:"
+          for i in {1..10}; do
+            echo "✔️ Prueba $i"
+          done
+          ls -la
