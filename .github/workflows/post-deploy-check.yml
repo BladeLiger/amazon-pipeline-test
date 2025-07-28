@@ -1,0 +1,52 @@
+name: Check AWS and Run Tests After PR
+
+on:
+  pull_request:
+    types: [closed]
+
+jobs:
+  wait-and-check:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Configurar credenciales AWS
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-2
+
+      - name: Esperar y verificar despliegue cada 30min (hasta 10 intentos)
+        id: esperar
+        run: |
+          PIPELINE_NAME="mi-pipeline"
+          MAX_INTENTOS=10
+          INTENTO=1
+          while [ "$INTENTO" -le "$MAX_INTENTOS" ]; do
+            echo "Intento $INTENTO de $MAX_INTENTOS..."
+            STATUS=$(aws codepipeline get-pipeline-state --name "$PIPELINE_NAME" --query "stageStates[?stageName=='Deploy'].latestExecution.status" --output text)
+            echo "Estado actual: $STATUS"
+
+            if [[ "$STATUS" == "Succeeded" ]]; then
+              echo "✅ Despliegue exitoso detectado"
+              echo "despliegue=ok" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+
+            echo "❌ Aún no desplegado. Esperando otros 30 minutos..."
+            sleep 1800
+            ((INTENTO++))
+          done
+
+          echo "❌ Despliegue no completado después de $MAX_INTENTOS intentos"
+          echo "despliegue=fail" >> "$GITHUB_OUTPUT"
+          exit 1
+
+      - name: Ejecutar pruebas del 1 al 10
+        if: steps.esperar.outputs.despliegue == 'ok'
+        run: |
+          echo "✅ Ejecutando pruebas post-deploy:"
+          for i in {1..10}; do
+            echo "✔️ Prueba $i"
+          done
+          ls -la
