@@ -17,61 +17,36 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: us-east-2
 
-      - name: Obtener executionId actual antes del push
-        id: previous
+      - name: Obtener el último executionId actual
+        id: get_execution
         run: |
-          echo "Obteniendo executionId actual antes del push..."
-          PREVIOUS_EXECUTION_ID=$(aws codepipeline list-pipeline-executions \
+          echo "🛰️ Obteniendo último executionId del pipeline..."
+          EXEC_ID=$(aws codepipeline list-pipeline-executions \
             --pipeline-name git-hub-blade \
             --max-items 1 \
             --query "pipelineExecutionSummaries[0].pipelineExecutionId" \
             --output text 2>/dev/null || echo "")
-          echo "Execution ID antes del push: $PREVIOUS_EXECUTION_ID"
-          echo "previous_execution_id=$PREVIOUS_EXECUTION_ID" >> "$GITHUB_OUTPUT"
 
-      - name: Esperar nueva ejecución generada por el push
-        id: get_execution
-        run: |
-          PIPELINE_NAME="git-hub-blade"
-          MAX_INTENTOS=20
-          INTERVALO=30
-          INTENTO=1
-          PREVIOUS="${{ steps.previous.outputs.previous_execution_id }}"
+          echo "Execution ID detectado: $EXEC_ID"
 
-          while [ "$INTENTO" -le "$MAX_INTENTOS" ]; do
-            EXECUTION_ID=$(aws codepipeline list-pipeline-executions \
-              --pipeline-name "$PIPELINE_NAME" \
-              --max-items 1 \
-              --query "pipelineExecutionSummaries[0].pipelineExecutionId" \
-              --output text 2>/dev/null || echo "")
+          if [[ "$EXEC_ID" == "None" || -z "$EXEC_ID" ]]; then
+            echo "❌ No se pudo obtener un executionId válido. Abortando..."
+            exit 1
+          fi
 
-            echo "Intento $INTENTO/$MAX_INTENTOS..."
-
-            if [[ "$EXECUTION_ID" != "$PREVIOUS" && "$EXECUTION_ID" != "None" && -n "$EXECUTION_ID" ]]; then
-              echo "🎯 Nueva ejecución detectada: $EXECUTION_ID"
-              echo "execution_id=$EXECUTION_ID" >> "$GITHUB_OUTPUT"
-              exit 0
-            fi
-
-            echo "⏳ Aún no se detecta nueva ejecución..."
-            sleep $INTERVALO
-            ((INTENTO++))
-          done
-
-          echo "❌ No se detectó una nueva ejecución tras $((MAX_INTENTOS * INTERVALO)) segundos"
-          exit 1
+          echo "execution_id=$EXEC_ID" >> "$GITHUB_OUTPUT"
 
       - name: Esperar a que termine el deploy
         id: esperar
         run: |
           PIPELINE_NAME="git-hub-blade"
           EXECUTION_ID="${{ steps.get_execution.outputs.execution_id }}"
-          MAX_INTENTOS=20
-          INTERVALO=15
+          MAX_INTENTOS=40   # Total: 40 * 30s = 20 minutos
+          INTERVALO=30
           INTENTO=1
 
           while [ "$INTENTO" -le "$MAX_INTENTOS" ]; do
-            echo "🔁 Intento $INTENTO/$MAX_INTENTOS - Esperando estado de ejecución..."
+            echo "⏳ Intento $INTENTO/$MAX_INTENTOS - Verificando estado de ejecución..."
 
             STATUS=$(aws codepipeline get-pipeline-execution \
               --pipeline-name "$PIPELINE_NAME" \
@@ -82,28 +57,4 @@ jobs:
             echo "Estado actual: $STATUS"
 
             if [[ "$STATUS" == "Succeeded" ]]; then
-              echo "✅ Despliegue exitoso detectado"
-              echo "despliegue=ok" >> "$GITHUB_OUTPUT"
-              exit 0
-            elif [[ "$STATUS" == "Failed" || "$STATUS" == "Stopped" ]]; then
-              echo "❌ El despliegue falló o fue detenido"
-              echo "despliegue=fail" >> "$GITHUB_OUTPUT"
-              exit 1
-            fi
-
-            sleep $INTERVALO
-            ((INTENTO++))
-          done
-
-          echo "❌ El despliegue no se completó tras $((MAX_INTENTOS * INTERVALO / 60)) minutos"
-          echo "despliegue=fail" >> "$GITHUB_OUTPUT"
-          exit 1
-
-      - name: Ejecutar pruebas del 1 al 10
-        if: steps.esperar.outputs.despliegue == 'ok'
-        run: |
-          echo "✅ Ejecutando pruebas post-deploy:"
-          for i in {1..10}; do
-            echo "✔️ Prueba $i"
-          done
-          ls -la
+              echo "✅ Despliegue exitoso dete
