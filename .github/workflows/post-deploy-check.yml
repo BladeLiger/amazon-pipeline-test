@@ -19,7 +19,7 @@ jobs:
       - name: Esperar y verificar despliegue cada 30min (hasta 10 intentos)
         id: esperar
         run: |
-          PIPELINE_NAME="mi-pipeline"
+          PIPELINE_NAME="git-hub-blade"
           MAX_INTENTOS=10
           INTENTO=1
           while [ "$INTENTO" -le "$MAX_INTENTOS" ]; do
