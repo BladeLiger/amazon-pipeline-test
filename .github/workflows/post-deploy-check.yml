@@ -17,38 +17,38 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: us-east-2
 
-      - name: Obtener el último executionId actual
+      - name: Obtener el último executionId del pipeline
         id: get_execution
         run: |
           echo "🛰️ Obteniendo último executionId del pipeline..."
           PIPELINE_NAME="git-hub-blade"
 
-          EXEC_ID=$(aws codepipeline list-pipeline-executions \
+          EXECUTION_ID=$(aws codepipeline list-pipeline-executions \
             --pipeline-name "$PIPELINE_NAME" \
             --max-items 1 \
             --query "pipelineExecutionSummaries[0].pipelineExecutionId" \
-            --output text 2>/dev/null || echo "")
+            --output text)
 
-          echo "Execution ID detectado: $EXEC_ID"
+          echo "Execution ID detectado: $EXECUTION_ID"
 
-          if [[ "$EXEC_ID" == "None" || -z "$EXEC_ID" ]]; then
-            echo "❌ No se pudo obtener un executionId válido. Abortando..."
+          if [ "$EXECUTION_ID" == "None" ] || [ -z "$EXECUTION_ID" ]; then
+            echo "::error ::No se pudo obtener el executionId"
             exit 1
           fi
 
-          echo "execution_id=$EXEC_ID" >> "$GITHUB_OUTPUT"
+          echo "execution_id=$EXECUTION_ID" >> $GITHUB_ENV
 
-      - name: Esperar a que termine TODO el pipeline (hasta 20 intentos cada 30s)
+      - name: Esperar a que termine el deploy (espera hasta 20 veces cada 1 minuto)
         id: esperar
         run: |
           PIPELINE_NAME="git-hub-blade"
-          EXECUTION_ID="${{ steps.get_execution.outputs.execution_id }}"
+          EXECUTION_ID="${{ env.execution_id }}"
           MAX_INTENTOS=20
-          INTERVALO=30
+          INTERVALO=60
           INTENTO=1
 
           while [ "$INTENTO" -le "$MAX_INTENTOS" ]; do
-            echo "⏳ Intento $INTENTO/$MAX_INTENTOS - verificando estado del pipeline..."
+            echo "⏳ Intento $INTENTO/$MAX_INTENTOS - Esperando deploy..."
 
             STATUS=$(aws codepipeline get-pipeline-execution \
               --pipeline-name "$PIPELINE_NAME" \
@@ -56,38 +56,34 @@ jobs:
               --query "pipelineExecution.status" \
               --output text)
 
-            echo "🔎 Estado actual del pipeline: $STATUS"
-
-            echo "🧩 Estado de cada etapa:"
-            aws codepipeline get-pipeline-state --name "$PIPELINE_NAME" \
-              --query "stageStates[].{Stage: stageName, Status: latestExecution.status}" \
-              --output table
+            echo "Estado actual del pipeline: $STATUS"
 
             if [[ "$STATUS" == "Succeeded" ]]; then
-              echo "✅ Pipeline finalizado exitosamente"
-              echo "despliegue=ok" >> "$GITHUB_OUTPUT"
-              exit 0
+              echo "✅ Despliegue exitoso detectado"
+              echo "despliegue=ok" >> $GITHUB_ENV
+              break
             elif [[ "$STATUS" == "Failed" || "$STATUS" == "Stopped" ]]; then
-              echo "❌ El pipeline falló o fue detenido"
-              echo "despliegue=fail" >> "$GITHUB_OUTPUT"
+              echo "::error ::El despliegue falló o fue detenido"
+              echo "despliegue=fail" >> $GITHUB_ENV
               exit 1
             fi
 
-            echo "⌛ Aún en progreso. Esperando $INTERVALO segundos..."
+            echo "⌛ Aún no completado. Esperando $INTERVALO segundos..."
             sleep $INTERVALO
             ((INTENTO++))
           done
 
-          echo "❌ El pipeline no se completó después de $((MAX_INTENTOS * INTERVALO / 60)) minutos"
-          echo "despliegue=fail" >> "$GITHUB_OUTPUT"
-          exit 1
+          if [ "$INTENTO" -gt "$MAX_INTENTOS" ]; then
+            echo "::error ::El despliegue no se completó tras $((MAX_INTENTOS * INTERVALO / 60)) minutos"
+            echo "despliegue=fail" >> $GITHUB_ENV
+            exit 1
+          fi
 
       - name: Ejecutar pruebas post-deploy
-        if: steps.esperar.outputs.despliegue == 'ok'
+        if: env.despliegue == 'ok'
         run: |
-          echo "🧪 Iniciando pruebas post-deploy"
+          echo "✅ LLEGÓ AQUÍ - Ejecutando pruebas post-deploy:"
           for i in {1..10}; do
-            echo "✔️ Prueba $i exitosa"
+            echo "✔️ Prueba $i"
           done
-          echo "🗂️ Archivos en el directorio actual:"
           ls -la
