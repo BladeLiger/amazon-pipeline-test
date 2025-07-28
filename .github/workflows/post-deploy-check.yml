@@ -1,8 +1,9 @@
-name: Check AWS and Run Tests After PR
+name: Check AWS and Run Tests After Deploy
 
 on:
-  pull_request:
-    types: [closed]
+  push:
+    branches:
+      - main
 
 jobs:
   wait-and-check:
@@ -21,12 +22,17 @@ jobs:
         run: |
           PIPELINE_NAME="git-hub-blade"
           MAX_INTENTOS=10
+          INTERVALO=300  # 5 min
           INTENTO=1
-          INTERVALO=300  # 5 minutos en segundos
 
           while [ "$INTENTO" -le "$MAX_INTENTOS" ]; do
-            echo "Intento $INTENTO de $MAX_INTENTOS..."
-            STATUS=$(aws codepipeline get-pipeline-state --name "$PIPELINE_NAME" --query "stageStates[?stageName=='Deploy'].latestExecution.status" --output text)
+            echo "⏳ Intento $INTENTO de $MAX_INTENTOS..."
+
+            STATUS=$(aws codepipeline get-pipeline-state \
+              --name "$PIPELINE_NAME" \
+              --query "stageStates[?stageName=='Deploy'].latestExecution.status" \
+              --output text)
+
             echo "Estado actual: $STATUS"
 
             if [[ "$STATUS" == "Succeeded" ]]; then
@@ -35,12 +41,12 @@ jobs:
               exit 0
             fi
 
-            echo "❌ Aún no desplegado. Esperando otros 5 minutos..."
+            echo "❌ Aún no desplegado. Esperando $INTERVALO segundos..."
             sleep $INTERVALO
             ((INTENTO++))
           done
 
-          echo "❌ Despliegue no completado después de $((MAX_INTENTOS * INTERVALO / 60)) minutos"
+          echo "❌ Despliegue no completado tras $((MAX_INTENTOS * INTERVALO / 60)) minutos"
           echo "despliegue=fail" >> "$GITHUB_OUTPUT"
           exit 1
 
