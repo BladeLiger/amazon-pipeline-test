@@ -16,12 +16,14 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: us-east-2
 
-      - name: Esperar y verificar despliegue cada 30min (hasta 10 intentos)
+      - name: Esperar y verificar despliegue cada 5 min (hasta 10 intentos)
         id: esperar
         run: |
           PIPELINE_NAME="git-hub-blade"
           MAX_INTENTOS=10
           INTENTO=1
+          INTERVALO=300  # 5 minutos en segundos
+
           while [ "$INTENTO" -le "$MAX_INTENTOS" ]; do
             echo "Intento $INTENTO de $MAX_INTENTOS..."
             STATUS=$(aws codepipeline get-pipeline-state --name "$PIPELINE_NAME" --query "stageStates[?stageName=='Deploy'].latestExecution.status" --output text)
@@ -33,12 +35,12 @@ jobs:
               exit 0
             fi
 
-            echo "❌ Aún no desplegado. Esperando otros 30 minutos..."
-            sleep 1800
+            echo "❌ Aún no desplegado. Esperando otros 5 minutos..."
+            sleep $INTERVALO
             ((INTENTO++))
           done
 
-          echo "❌ Despliegue no completado después de $MAX_INTENTOS intentos"
+          echo "❌ Despliegue no completado después de $((MAX_INTENTOS * INTERVALO / 60)) minutos"
           echo "despliegue=fail" >> "$GITHUB_OUTPUT"
           exit 1
 
